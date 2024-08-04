@@ -1,12 +1,15 @@
+"""Data class to store folder info in json header."""
+
 import logging
-from dataclasses import dataclass
+from typing import Literal
+from typing import Generator
+from typing import TypeGuard
+from typing import override
 from pathlib import PurePath
-from typing import Generator, Literal, override, TypeGuard
-from asar.models.file import (
-    FileMetaInfo,
-    FileMetaDictInfo,
-    to_file_meta_info as _to_file_meta_info,
-)
+from dataclasses import dataclass
+from asar.models.file import FileMetaInfo
+from asar.models.file import FileMetaDictInfo
+from asar.models.file import to_file_meta_info as _to_file_meta_info
 from asar.models.metainfo import MetaInfo
 
 
@@ -15,13 +18,14 @@ _logger = logging.getLogger(__name__)
 _WalkReturnType = tuple[PurePath, dict[str, "FolderMetaInfo"], dict[str, FileMetaInfo]]
 
 FolderMetaDictInfo = dict[
-    str, FileMetaDictInfo | dict[Literal["files"], "FolderMetaDictInfo"]
+    str,
+    FileMetaDictInfo | dict[Literal["files"], "FolderMetaDictInfo"],
 ]
 
 
 @dataclass
 class FolderMetaInfo(MetaInfo):
-    """The basic model of folder in meta info
+    """The basic model of folder in meta info.
 
     ```json
     {
@@ -45,27 +49,29 @@ class FolderMetaInfo(MetaInfo):
                 base[name] = {"files": meta.to_json()}
         return base
 
-    def _filter_folder(
-        self, i: tuple[str, "FileMetaInfo | FolderMetaInfo"]
-    ) -> TypeGuard[tuple[str, "FolderMetaInfo"]]:
-        return isinstance(i[1], FolderMetaInfo)
+    @property
+    def _folders(self) -> filter[tuple[str, "FolderMetaInfo"]]:
+        def _filter_folder(
+            i: tuple[str, "FileMetaInfo | FolderMetaInfo"],
+        ) -> TypeGuard[tuple[str, "FolderMetaInfo"]]:
+            return isinstance(i[1], FolderMetaInfo)
 
-    def _filter_file(
-        self, i: tuple[str, "FileMetaInfo | FolderMetaInfo"]
-    ) -> TypeGuard[tuple[str, FileMetaInfo]]:
-        return isinstance(i[1], FileMetaInfo)
+        return filter(_filter_folder, self.files.items())
 
     @property
-    def _folders(self):
-        return filter(self._filter_folder, self.files.items())
+    def _files(self) -> filter[tuple[str, FileMetaInfo]]:
+        def _filter_file(
+            i: tuple[str, "FileMetaInfo | FolderMetaInfo"],
+        ) -> TypeGuard[tuple[str, FileMetaInfo]]:
+            return isinstance(i[1], FileMetaInfo)
 
-    @property
-    def _files(self):
-        return filter(self._filter_file, self.files.items())
+        return filter(_filter_file, self.files.items())
 
     def walk(
-        self, prefix: PurePath | None = None
+        self,
+        prefix: PurePath | None = None,
     ) -> Generator[_WalkReturnType, None, None]:
+        """Walk sub-directories and files like `os.walk`."""
         if prefix is None:
             prefix = PurePath("./")
         yield prefix, dict(self._folders), dict(self._files)
@@ -75,6 +81,7 @@ class FolderMetaInfo(MetaInfo):
 
 
 def to_folder_meta_info(json: FolderMetaDictInfo) -> FolderMetaInfo:
+    """Generate FolderMetaInfo from FolderMetaDictInfo."""
     files: dict[str, FileMetaInfo | FolderMetaInfo] = {}
     for name, item in json.items():
         if list(item.keys()) == ["files"]:

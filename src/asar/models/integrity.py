@@ -1,6 +1,10 @@
-from typing import Literal, override
+"""Data class to store integrity info in json header."""
+
+from typing import Literal
+from typing import override
 from dataclasses import dataclass
 from asar.models.metainfo import MetaInfo
+
 
 AlgorithmType = Literal["SHA256"]  # TODO: more algorithms
 IntegrityDictInfo = dict[
@@ -12,7 +16,6 @@ IntegrityDictInfo = dict[
 @dataclass
 class IntegrityInfo(MetaInfo):
     """The basic model of `integrity` part in file meta info.
-
 
     ```json
     {
@@ -41,6 +44,7 @@ class IntegrityInfo(MetaInfo):
 
 
 def to_integrity_info(json: IntegrityDictInfo) -> IntegrityInfo:
+    """Generate IntegrityInfo from IntegrityDictInfo."""
     algorithm: AlgorithmType | None = None
     hash_: str | None = None
     blocksize: int | None = None
@@ -73,5 +77,8 @@ def to_integrity_info(json: IntegrityDictInfo) -> IntegrityInfo:
     assert blocksize is not None
     assert blocks is not None
     return IntegrityInfo(
-        algorithm=algorithm, hash_=hash_, blocksize=blocksize, blocks=blocks
+        algorithm=algorithm,
+        hash_=hash_,
+        blocksize=blocksize,
+        blocks=blocks,
     )

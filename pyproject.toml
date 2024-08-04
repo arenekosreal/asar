@@ -100,10 +100,17 @@ select = [
 ignore = [
     "ANN101", # type for self
     "ANN102", # type for cls
-    "PLW0603", # global statements
-    "S311", # random is not secure
-    "FIX002" # todo is not critical
+    "FIX002", # todo is not critical
+    "S101" # assert in code
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Using print is required to build cli interface.
+"src/asar/__main__.py" = ["T201"]
+"src/asar/cli/list.py" = ["T201"]
+# There are indeed so many arguments.
+# placeholder module with unused arguments.
+"src/asar/cli/pack.py" = ["PLR0913", "PLR0917", "ARG001"]
 
 [tool.ruff.lint.flake8-annotations]
 allow-star-arg-any = true

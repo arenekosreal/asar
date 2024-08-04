@@ -1,8 +1,10 @@
+"""Check integrity with sha256 checksum algorithm."""
+
 import hashlib
 import logging
 from typing import override
-from asar.integrity.checker import IntegrityChecker
 from asar.models.integrity import IntegrityInfo
+from asar.integrity.checker import IntegrityChecker
 
 
 _logger = logging.getLogger(__name__)

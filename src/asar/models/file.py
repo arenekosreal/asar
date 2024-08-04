@@ -1,23 +1,26 @@
+"""Data class to store file info in json header."""
+
 import logging
+from typing import Literal
+from typing import override
 from dataclasses import dataclass
-from typing import Literal, override
-from asar.models.integrity import (
-    IntegrityDictInfo,
-    IntegrityInfo,
-    to_integrity_info as _to_integrity_info,
-)
 from asar.models.metainfo import MetaInfo
+from asar.models.integrity import IntegrityInfo
+from asar.models.integrity import IntegrityDictInfo
+from asar.models.integrity import to_integrity_info as _to_integrity_info
+
 
 _logger = logging.getLogger(__name__)
 
 FileMetaDictInfo = dict[
-    Literal["size", "offset", "unpacked", "integrity"], int | str | IntegrityDictInfo
+    Literal["size", "offset", "unpacked", "integrity"],
+    int | str | IntegrityDictInfo,
 ]
 
 
 @dataclass
 class FileMetaInfo(MetaInfo):
-    """The basic model of file in meta info
+    """The basic model of file in meta info.
 
     ```json
     {
@@ -50,6 +53,7 @@ class FileMetaInfo(MetaInfo):
 
 
 def to_file_meta_info(json: FileMetaDictInfo) -> FileMetaInfo:
+    """Generate FileMetaInfo from FileMetaDictInfo."""
     size: int | None = None
     offset: str | None = None
     integrity: IntegrityInfo | None = None

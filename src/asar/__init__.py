@@ -1,19 +1,19 @@
-import math
-import json
+"""Operate asar archive in a convient way without nodejs installed."""
+
 import sys
+import json
+import math
 import logging
-from pathlib import PurePath
-from typing import Callable, Literal
 from enum import Enum
-from asar.integrity.checker import IntegrityChecker
-from asar.integrity.sha256 import Sha256Checker
+from typing import Literal
+from pathlib import PurePath
 from asar.models.file import FileMetaInfo
-from asar.models.folder import (
-    FolderMetaInfo,
-    FolderMetaDictInfo,
-    to_folder_meta_info as _to_folder_meta_info,
-)
+from asar.models.folder import FolderMetaInfo
+from asar.models.folder import FolderMetaDictInfo
+from asar.models.folder import to_folder_meta_info as _to_folder_meta_info
+from asar.integrity.sha256 import Sha256Checker
 from asar.models.integrity import AlgorithmType
+from asar.integrity.checker import IntegrityChecker
 
 
 __version__ = "0.1.0"
@@ -34,12 +34,15 @@ class Alignment(Enum):
     DWORD = 4
 
 
-class ChecksumMismatchError(Exception): ...
+class ChecksumMismatchError(Exception):
+    """Raises when a FileMetaInfo failed to check integrity."""
 
 
 class Asar:
-    """An asar archive
-    See also: https://knifecoat.com/Posts/ASAR+Format+Spec
+    """An asar archive.
+
+    See Also:
+        https://knifecoat.com/Posts/ASAR+Format+Spec
     """
 
     HEAD_MAGIC_SIZE = 4
@@ -82,17 +85,19 @@ class Asar:
         json_header_start = self.HEAD_SIZE
         json_header_end = json_header_start + json_header_size
         self.json_header: dict[Literal["files"], FolderMetaDictInfo] = json.loads(
-            raw[json_header_start:json_header_end]
+            raw[json_header_start:json_header_end],
         )
         self.meta = _to_folder_meta_info(self.json_header["files"])
         self._content_start = (
-            math.ceil(json_header_end / self.alignment.value) * self.alignment.value
+            math.ceil(json_header_end / self.alignment.value) * self.alignment.value,
         )
 
     def __bytes__(self) -> bytes:
+        """Convert Asar object to valid bytes."""
         head_magic = self.HEAD_MAGIC_VALUE.to_bytes(self.HEAD_MAGIC_SIZE, sys.byteorder)
         json_header_data = json.dumps(
-            {"files": self.meta.to_json()}, sort_keys=True
+            {"files": self.meta.to_json()},
+            sort_keys=True,
         ).encode()
         json_header_size = len(json_header_data).to_bytes(
             self.HEAD_JSON_HEADER_SIZE_SIZE,
@@ -113,7 +118,7 @@ class Asar:
         assert len(file_header) == self.HEAD_SIZE
         archive_header = file_header + json_header_data
         padding = math.ceil(
-            len(archive_header) / self.alignment.value
+            len(archive_header) / self.alignment.value,
         ) * self.alignment.value - len(archive_header)
         archive_header += bytes(padding)
         return archive_header + self.content
@@ -131,14 +136,12 @@ class Asar:
         self,
         info: FileMetaInfo,
         strict: bool = True,
-        transform: Callable[[bytes], bytes] | None = None,
     ) -> bytes:
         """Get the file in archive by FileMetaInfo given.
 
         Args:
             info(FileMetaInfo): The metainfo of target file.
             strict(bool): If ensure checksum is valid.
-            transform(Callable[[bytes], bytes] | None): apply to the bytes and return its result instead raw result. Defaults to None
 
         Returns:
             bytes: The content of file.
@@ -156,17 +159,16 @@ class Asar:
         content = self.content[offset : offset + info.size]
         if info.integrity is not None:
             if not self._checkers[info.integrity.algorithm].check(
-                content, info.integrity
+                content,
+                info.integrity,
             ):
                 if strict:
-                    raise ChecksumMismatchError()
+                    raise ChecksumMismatchError
                 _logger.warning("Checksum of file is not match meta data!")
             else:
                 _logger.info("Check integrity successful!")
         else:
             _logger.warning("There is no integrity info for the file.")
-        if transform is not None:
-            return transform(content)
         return content
 
     def at(self, path: PurePath) -> FolderMetaInfo | FileMetaInfo:
@@ -194,4 +196,4 @@ class Asar:
         raise FileNotFoundError("No such file or directory", path)
 
 
-__all__ = ["__version__", "Alignment", "ChecksumMismatchError", "Asar"]
+__all__ = ["Alignment", "Asar", "ChecksumMismatchError", "__version__"]
