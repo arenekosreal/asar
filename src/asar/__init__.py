@@ -44,8 +44,15 @@ class Asar:
 
     HEAD_MAGIC_SIZE = 4
     HEAD_MAGIC_VALUE = 4
-    HEAD_JSON_HEADER_SIZE_PICKLE_SIZE = 8
-    HEAD_SIZE = 16
+    HEAD_JSON_HEADER_SIZE_SIZE = 4  # Size of header size
+    HEAD_JSON_HEADER_SIZE_SIZE_SIZE = 4  # Size of `Size of header size`
+    HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE = 4  # Size of `Size of `Size of header size``
+    HEAD_SIZE = (
+        HEAD_MAGIC_SIZE
+        + HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE
+        + HEAD_JSON_HEADER_SIZE_SIZE_SIZE
+        + HEAD_JSON_HEADER_SIZE_SIZE
+    )
 
     def __init__(self, raw: bytes, alignment: Alignment = Alignment.DWORD):
         """Initialize Asar instance with arguments given.
@@ -61,23 +68,55 @@ class Asar:
             )
         except AssertionError as e:
             raise ValueError("Invalid magic number") from e
+        self.alignment = alignment
         self._raw = raw
         json_header_size_start = (
-            self.HEAD_MAGIC_SIZE + self.HEAD_JSON_HEADER_SIZE_PICKLE_SIZE
+            self.HEAD_MAGIC_SIZE
+            + self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE
+            + self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE
         )
         json_header_size_end = self.HEAD_SIZE
         json_header_size = raw[json_header_size_start:json_header_size_end]
         json_header_size = int.from_bytes(json_header_size, sys.byteorder)
         _logger.debug("JSON header size is %s", json_header_size)
-        json_header_start = alignment.value * 4
+        json_header_start = self.HEAD_SIZE
         json_header_end = json_header_start + json_header_size
         self.json_header: dict[Literal["files"], FolderMetaDictInfo] = json.loads(
             raw[json_header_start:json_header_end]
         )
         self.meta = _to_folder_meta_info(self.json_header["files"])
         self._content_start = (
-            math.ceil(json_header_end / alignment.value) * alignment.value
+            math.ceil(json_header_end / self.alignment.value) * self.alignment.value
         )
+
+    def __bytes__(self) -> bytes:
+        head_magic = self.HEAD_MAGIC_VALUE.to_bytes(self.HEAD_MAGIC_SIZE, sys.byteorder)
+        json_header_data = json.dumps(
+            {"files": self.meta.to_json()}, sort_keys=True
+        ).encode()
+        json_header_size = len(json_header_data).to_bytes(
+            self.HEAD_JSON_HEADER_SIZE_SIZE,
+            sys.byteorder,
+        )
+        json_header_size_size = (
+            len(json_header_data) + len(json_header_size)
+        ).to_bytes(self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE, sys.byteorder)
+        json_header_size_size_size = (
+            len(json_header_data) + len(json_header_size) + len(json_header_size_size)
+        ).to_bytes(self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE, sys.byteorder)
+        file_header = (
+            head_magic
+            + json_header_size_size_size
+            + json_header_size_size
+            + json_header_size
+        )
+        assert len(file_header) == self.HEAD_SIZE
+        archive_header = file_header + json_header_data
+        padding = math.ceil(
+            len(archive_header) / self.alignment.value
+        ) * self.alignment.value - len(archive_header)
+        archive_header += bytes(padding)
+        return archive_header + self.content
 
     @property
     def content(self) -> bytes:
