@@ -62,7 +62,6 @@ line-length = 100
 extend-exclude = ["__pycache__"]
 output-format = "github"
 required-version = ">=0.3.4"
-target-version = "py311"
 
 [tool.ruff.lint]
 preview = true
