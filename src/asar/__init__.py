@@ -89,7 +89,7 @@ class Asar:
         )
         self.meta = _to_folder_meta_info(self.json_header["files"])
         self._content_start = (
-            math.ceil(json_header_end / self.alignment.value) * self.alignment.value,
+            math.ceil(json_header_end / self.alignment.value) * self.alignment.value
         )
 
     def __bytes__(self) -> bytes:
@@ -98,16 +98,30 @@ class Asar:
         json_header_data = json.dumps(
             {"files": self.meta.to_json()},
             sort_keys=True,
+            separators=(",", ":"),
         ).encode()
         json_header_size = len(json_header_data).to_bytes(
             self.HEAD_JSON_HEADER_SIZE_SIZE,
             sys.byteorder,
         )
+        padding = (
+            (
+                math.ceil(
+                    (self.HEAD_SIZE + len(json_header_data)) / self.alignment.value,
+                )
+                * self.alignment.value
+            )
+            - self.HEAD_SIZE
+            - len(json_header_data)
+        )
         json_header_size_size = (
-            len(json_header_data) + len(json_header_size)
+            len(json_header_data) + len(json_header_size) + padding
         ).to_bytes(self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE, sys.byteorder)
         json_header_size_size_size = (
-            len(json_header_data) + len(json_header_size) + len(json_header_size_size)
+            len(json_header_data)
+            + len(json_header_size)
+            + padding
+            + len(json_header_size_size)
         ).to_bytes(self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE, sys.byteorder)
         file_header = (
             head_magic
@@ -116,11 +130,7 @@ class Asar:
             + json_header_size
         )
         assert len(file_header) == self.HEAD_SIZE
-        archive_header = file_header + json_header_data
-        padding = math.ceil(
-            len(archive_header) / self.alignment.value,
-        ) * self.alignment.value - len(archive_header)
-        archive_header += bytes(padding)
+        archive_header = file_header + json_header_data + bytes(padding)
         return archive_header + self.content
 
     @property
@@ -183,9 +193,10 @@ class Asar:
         Raises:
             FileNotFoundError: If no such file or directory.
         """
-        path = path.relative_to("/")
         if path == PurePath("/"):
             return self.meta
+        if path.is_absolute():
+            path = path.relative_to("/")
         for current_path, folders, files in self.meta.walk():
             for name, meta in folders.items():
                 if current_path / name == path:
