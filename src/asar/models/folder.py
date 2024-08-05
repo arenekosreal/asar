@@ -50,7 +50,7 @@ class FolderMetaInfo(MetaInfo):
         return base
 
     @property
-    def _folders(self) -> filter[tuple[str, "FolderMetaInfo"]]:
+    def _folders(self) -> "filter[tuple[str, FolderMetaInfo]]":
         def _filter_folder(
             i: tuple[str, "FileMetaInfo | FolderMetaInfo"],
         ) -> TypeGuard[tuple[str, "FolderMetaInfo"]]:
@@ -59,7 +59,7 @@ class FolderMetaInfo(MetaInfo):
         return filter(_filter_folder, self.files.items())
 
     @property
-    def _files(self) -> filter[tuple[str, FileMetaInfo]]:
+    def _files(self) -> "filter[tuple[str, FileMetaInfo]]":
         def _filter_file(
             i: tuple[str, "FileMetaInfo | FolderMetaInfo"],
         ) -> TypeGuard[tuple[str, FileMetaInfo]]:
