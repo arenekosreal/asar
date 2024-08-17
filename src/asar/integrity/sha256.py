@@ -3,7 +3,7 @@
 import hashlib
 import logging
 from typing import override
-from asar.models.integrity import IntegrityInfo
+from asar.integrity.base import IntegrityInfo
 from asar.integrity.checker import IntegrityChecker
 
 

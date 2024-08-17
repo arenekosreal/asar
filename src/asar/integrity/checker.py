@@ -2,7 +2,7 @@
 
 from abc import ABC
 from abc import abstractmethod
-from asar.models.integrity import IntegrityInfo
+from asar.integrity.base import IntegrityInfo
 
 
 class IntegrityChecker(ABC):

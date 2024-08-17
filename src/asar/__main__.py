@@ -96,7 +96,6 @@ def main():
     e = sparser.add_parser("extract", aliases=["e"], help="extract archive")
     e = _create_extract_handler(e)
     args = parser.parse_args()
-    print(args)
     if args.version:
         print(__version__)
     else:

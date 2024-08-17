@@ -1,22 +1,24 @@
 """Operate asar archive in a convient way without nodejs installed."""
 
+__version__ = "0.2.0"
+
 import sys
 import json
 import math
 import logging
 from enum import Enum
 from typing import Literal
+from typing import TypeGuard
+from typing import OrderedDict
+from typing import overload
+from typing import override
+from pathlib import Path
 from pathlib import PurePath
-from asar.models.file import FileMetaInfo
-from asar.models.folder import FolderMetaInfo
-from asar.models.folder import FolderMetaDictInfo
-from asar.models.folder import to_folder_meta_info as _to_folder_meta_info
-from asar.integrity.sha256 import Sha256Checker
-from asar.models.integrity import AlgorithmType
-from asar.integrity.checker import IntegrityChecker
+from itertools import chain
+from asar.file.base import AsarFile
+from asar.file.base import FileMetaInfo
+from asar.file.base import FileMetaDictInfo
 
-
-__version__ = "0.1.0"
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.INFO)
@@ -28,183 +30,219 @@ _sh.setFormatter(_fmt)
 _logger.addHandler(_sh)
 
 
+def _is_debug() -> bool:
+    return _logger.level == logging.DEBUG
+
+
+FolderMetaDictInfo = dict[
+    Literal["files"],
+    dict[str, "FileMetaDictInfo | FolderMetaDictInfo"],
+]
+
+
 class Alignment(Enum):
     """How many bytes are the asar archive is aligned in."""
 
     DWORD = 4
 
 
-class ChecksumMismatchError(Exception):
-    """Raises when a FileMetaInfo failed to check integrity."""
-
-
-class Asar:
+class Asar(dict[PurePath, AsarFile]):
     """An asar archive.
+
+    You can use it like dict[PurePath, AsarFile] to access files in the archive.
 
     See Also:
         https://knifecoat.com/Posts/ASAR+Format+Spec
+        https://github.com/electron/asar#format
     """
 
-    HEAD_MAGIC_SIZE = 4
-    HEAD_MAGIC_VALUE = 4
-    HEAD_JSON_HEADER_SIZE_SIZE = 4  # Size of header size
-    HEAD_JSON_HEADER_SIZE_SIZE_SIZE = 4  # Size of `Size of header size`
-    HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE = 4  # Size of `Size of `Size of header size``
-    HEAD_SIZE = (
-        HEAD_MAGIC_SIZE
-        + HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE
-        + HEAD_JSON_HEADER_SIZE_SIZE_SIZE
-        + HEAD_JSON_HEADER_SIZE_SIZE
-    )
+    @overload
+    def __init__(self) -> None: ...
 
-    def __init__(self, raw: bytes, alignment: Alignment = Alignment.DWORD):
-        """Initialize Asar instance with arguments given.
+    @overload
+    def __init__(self, *, alignment: Alignment) -> None: ...
+
+    @overload
+    def __init__(self, raw: bytes) -> None: ...
+
+    @overload
+    def __init__(self, raw: bytes, alignment: Alignment) -> None: ...
+
+    def __init__(
+        self,
+        raw: bytes | None = None,
+        alignment: Alignment = Alignment.DWORD,
+    ):
+        """Initialize an Asar archive with arguments given.
 
         Args:
             raw(bytes): The content of asar archive.
-            alignment(Alignment): How the archive is aligned, defaults to Alignment.DWORD
+            alignment(Alignment): How the archive is aligned.
         """
-        try:
-            assert (
-                int.from_bytes(raw[0 : self.HEAD_MAGIC_SIZE], sys.byteorder)
-                == self.HEAD_MAGIC_VALUE
-            )
-        except AssertionError as e:
-            raise ValueError("Invalid magic number") from e
+        super().__init__()
         self.alignment = alignment
-        self._raw = raw
-        json_header_size_start = (
-            self.HEAD_MAGIC_SIZE
-            + self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE
-            + self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE
-        )
-        json_header_size_end = self.HEAD_SIZE
-        json_header_size = raw[json_header_size_start:json_header_size_end]
-        json_header_size = int.from_bytes(json_header_size, sys.byteorder)
-        _logger.debug("JSON header size is %s", json_header_size)
-        json_header_start = self.HEAD_SIZE
-        json_header_end = json_header_start + json_header_size
-        self.json_header: dict[Literal["files"], FolderMetaDictInfo] = json.loads(
-            raw[json_header_start:json_header_end],
-        )
-        self.meta = _to_folder_meta_info(self.json_header["files"])
-        self._content_start = (
-            math.ceil(json_header_end / self.alignment.value) * self.alignment.value
-        )
+        if raw is None:
+            _logger.debug("Creating an empty archive.")
+        else:
+            _logger.debug("Parsing input bytes...")
+            magic_header = raw[: self.alignment.value]
+            if magic_header != self.archive_magic_bytes:
+                raise ValueError("Invalid file magic header.")
+            json_header_size_start = self.alignment.value * 3
+            json_header_size_end = self.alignment.value * 4
+            json_header_size = raw[json_header_size_start:json_header_size_end]
+            json_header_size = int.from_bytes(json_header_size, sys.byteorder)
+            json_header_start = json_header_size_end
+            json_header_end = json_header_start + json_header_size
+            json_header_bytes = raw[json_header_start:json_header_end]
+            if _is_debug():
+                _ = Path("headers.debug.json").write_text(
+                    json.dumps(json_header_bytes, indent=4),
+                    encoding="utf-8",
+                )
+            json_header: FolderMetaDictInfo = json.loads(json_header_bytes)
+            padding = self._get_padding_size(json_header_bytes)
+            self._flattern_json_header_recursively(
+                raw[json_header_end + padding :],
+                json_header,
+            )
+
+    @property
+    def archive_magic_bytes(self) -> bytes:
+        """Magic number bytes of archive."""
+        return self.alignment.value.to_bytes(self.alignment.value, sys.byteorder)
+
+    @property
+    def json_header(self) -> FolderMetaDictInfo:
+        """Get json header of archive."""
+        return self._build_json_header_recursively()
+
+    @property
+    def folders(self) -> list[PurePath]:
+        """Get folders' paths."""
+        folders = chain.from_iterable(f.parents for f in self.files)
+        folders = list(set(folders))
+        if PurePath() in folders:
+            folders.remove(PurePath())
+        return sorted(folders)
+
+    @property
+    def files(self) -> list[PurePath]:
+        """Get files' paths."""
+        return sorted(self.keys())
 
     def __bytes__(self) -> bytes:
         """Convert Asar object to valid bytes."""
-        head_magic = self.HEAD_MAGIC_VALUE.to_bytes(self.HEAD_MAGIC_SIZE, sys.byteorder)
-        json_header_data = json.dumps(
-            {"files": self.meta.to_json()},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        json_header_size = len(json_header_data).to_bytes(
-            self.HEAD_JSON_HEADER_SIZE_SIZE,
+        self._sync_meta_info()
+        content = bytes().join(self[f].content for f in self.files)
+        json_header = json.dumps(self.json_header, separators=(",", ":")).encode()
+        json_header_size = len(json_header).to_bytes(
+            self.alignment.value,
             sys.byteorder,
         )
-        padding = (
-            (
-                math.ceil(
-                    (self.HEAD_SIZE + len(json_header_data)) / self.alignment.value,
-                )
-                * self.alignment.value
-            )
-            - self.HEAD_SIZE
-            - len(json_header_data)
-        )
-        json_header_size_size = (
-            len(json_header_data) + len(json_header_size) + padding
-        ).to_bytes(self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE, sys.byteorder)
-        json_header_size_size_size = (
-            len(json_header_data)
-            + len(json_header_size)
-            + padding
-            + len(json_header_size_size)
-        ).to_bytes(self.HEAD_JSON_HEADER_SIZE_SIZE_SIZE_SIZE, sys.byteorder)
-        file_header = (
-            head_magic
-            + json_header_size_size_size
-            + json_header_size_size
-            + json_header_size
-        )
-        assert len(file_header) == self.HEAD_SIZE
-        archive_header = file_header + json_header_data + bytes(padding)
-        return archive_header + self.content
+        padding = self._get_padding_size(json_header)
+        padding = bytes(padding)
+        prefix = json_header_size + json_header + padding
+        prefix = self._pickle(prefix)
+        prefix = self._pickle(prefix)
+        header = self.archive_magic_bytes + prefix
+        if (len(header) % self.alignment.value) != 0:
+            raise RuntimeError("Failed to align header part")
+        return header + content
 
-    @property
-    def content(self) -> bytes:
-        """The content of all files in the archive."""
-        return self._raw[self._content_start :]
+    @override
+    def __setitem__(self, key: PurePath, value: AsarFile, /) -> None:
+        if key.is_absolute():
+            key = key.relative_to("/")
+        return super().__setitem__(key, value)
 
-    @property
-    def _checkers(self) -> dict[AlgorithmType, IntegrityChecker]:
-        return {"SHA256": Sha256Checker()}
+    @override
+    def __getitem__(self, key: PurePath, /) -> AsarFile:
+        if key.is_absolute():
+            key = key.relative_to("/")
+        return super().__getitem__(key)
 
-    def get_file(
+    def _get_padding_size(self, data: bytes) -> int:
+        size = len(data)
+        block_count = math.ceil(size / self.alignment.value)
+        aligned_size = block_count * self.alignment.value
+        return aligned_size - size
+
+    def _pickle(self, data: bytes) -> bytes:
+        size = len(data)
+        size = size.to_bytes(self.alignment.value, sys.byteorder)
+        return size + data
+
+    def _unpickle(self, data: bytes) -> tuple[int, bytes]:
+        size = data[: self.alignment.value]
+        size = int.from_bytes(size, sys.byteorder)
+        return size, data[self.alignment.value :]
+
+    def _flattern_json_header_recursively(
         self,
-        info: FileMetaInfo,
-        strict: bool = True,
-    ) -> bytes:
-        """Get the file in archive by FileMetaInfo given.
+        content: bytes,
+        data: FolderMetaDictInfo,
+        parent: PurePath | None = None,
+    ):
+        def _is_folder_meta_dict_info(
+            meta: FileMetaDictInfo | FolderMetaDictInfo,
+        ) -> TypeGuard[FolderMetaDictInfo]:
+            return list(meta.keys()) == ["files"]
 
-        Args:
-            info(FileMetaInfo): The metainfo of target file.
-            strict(bool): If ensure checksum is valid.
+        def _is_file_meta_dict_info(
+            meta: FileMetaDictInfo | FolderMetaDictInfo,
+        ) -> TypeGuard[FileMetaDictInfo]:
+            return "files" not in meta
 
-        Returns:
-            bytes: The content of file.
-
-        Raises:
-            ValueError: If this file is unpacked.
-            IndexError: If the offset is out of range.
-            ChecksumMismatchError: If strict is True and failed to check integrity
-        """
-        if info.offset is None:
-            raise ValueError("This file is unpacked.")
-        offset = int(info.offset)
-        if offset > len(self.content) or offset < 0:
-            raise IndexError("Cannot find file at offset %s", offset)
-        content = self.content[offset : offset + info.size]
-        if info.integrity is not None:
-            if not self._checkers[info.integrity.algorithm].check(
-                content,
-                info.integrity,
-            ):
-                if strict:
-                    raise ChecksumMismatchError
-                _logger.warning("Checksum of file is not match meta data!")
+        if parent is None:
+            parent = PurePath()
+        for name, meta in data["files"].items():
+            if _is_folder_meta_dict_info(meta):
+                self._flattern_json_header_recursively(content, meta, parent / name)
+            elif _is_file_meta_dict_info(meta):
+                typed_meta = FileMetaInfo.from_json(meta)
+                offset = typed_meta.offset
+                if offset is None:
+                    raise RuntimeError("This file is unpacked.")
+                offset = int(offset)
+                content_start = offset
+                content_end = offset + typed_meta.size
+                self[parent / name] = AsarFile(
+                    typed_meta,
+                    content[content_start:content_end],
+                )
             else:
-                _logger.info("Check integrity successful!")
-        else:
-            _logger.warning("There is no integrity info for the file.")
-        return content
+                raise NotImplementedError("This meta info is not supported.")
 
-    def at(self, path: PurePath) -> FolderMetaInfo | FileMetaInfo:
-        """Get metainfo at path.
+    def _build_json_header_recursively(
+        self,
+        parent: PurePath | None = None,
+    ) -> FolderMetaDictInfo:
+        if parent is None:
+            parent = PurePath()
 
-        Args:
-            path(PurePath): An absolute path relative to the root directory in archive.
+        def _is_direct_child_of_parent(i: PurePath) -> bool:
+            return i.is_relative_to(parent) and len(i.relative_to(parent).parts) == 1
 
-        Returns:
-            FolderMetaInfo | FileMetaInfo: The metainfo at path given.
+        filtered = filter(_is_direct_child_of_parent, self.files + self.folders)
 
-        Raises:
-            FileNotFoundError: If no such file or directory.
-        """
-        if path == PurePath("/"):
-            return self.meta
-        if path.is_absolute():
-            path = path.relative_to("/")
-        for current_path, folders, files in self.meta.walk():
-            for name, meta in folders.items():
-                if current_path / name == path:
-                    return meta
-            for name, meta in files.items():
-                if current_path / name == path:
-                    return meta
-        raise FileNotFoundError("No such file or directory", path)
+        header: FolderMetaDictInfo = {"files": OrderedDict()}
+        # TODO
+        for path in sorted(filtered):
+            if path in self.files:
+                meta = self[path].meta
+                header["files"][path.name] = meta.to_json()
+            else:
+                header["files"][path.name] = self._build_json_header_recursively(path)
+        return header
+
+    def _sync_meta_info(self):
+        offset = 0
+        for f in self.files:
+            if self[f].meta.offset is not None:
+                size = len(self[f].content)
+                self[f].meta.offset = str(offset)
+                offset += size
 
 
-__all__ = ["Alignment", "Asar", "ChecksumMismatchError", "__version__"]
+__all__ = ["Alignment", "Asar", "__version__"]

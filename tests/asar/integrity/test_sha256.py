@@ -2,8 +2,8 @@
 
 import os
 import hashlib
+from asar.integrity.base import IntegrityInfo
 from asar.integrity.sha256 import Sha256Checker
-from asar.models.integrity import IntegrityInfo
 
 
 def test_check():
